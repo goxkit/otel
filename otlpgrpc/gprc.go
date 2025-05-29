@@ -8,12 +8,16 @@
 package otlpgrpc
 
 import (
+	"context"
+	"crypto/x509"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/goxkit/configs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
@@ -32,9 +36,11 @@ import (
 //   - *grpc.ClientConn: The configured gRPC client connection
 //   - error: Any error encountered during connection setup
 func NewExporterGRPCClient(cfgs *configs.Configs) (*grpc.ClientConn, error) {
+
 	conn, err := grpc.NewClient(
 		cfgs.OTLPConfigs.Endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(evaluateCredentials(cfgs)),
+		grpc.WithPerRPCCredentials(newPerRPCCredentials(cfgs)),
 		grpc.WithIdleTimeout(cfgs.OTLPConfigs.ExporterIdleTimeout),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    cfgs.OTLPConfigs.ExporterKeepAliveTime,
@@ -54,4 +60,49 @@ func NewExporterGRPCClient(cfgs *configs.Configs) (*grpc.ClientConn, error) {
 	}
 
 	return conn, err
+}
+
+func evaluateCredentials(cfgs *configs.Configs) credentials.TransportCredentials {
+	if !cfgs.OTLPConfigs.ExporterTLSEnabled {
+		return insecure.NewCredentials()
+	}
+
+	certPool := x509.NewCertPool()
+	return credentials.NewClientTLSFromCert(certPool, "")
+}
+
+type perRPCCredentials struct {
+	tlsEnabled bool
+	headers    map[string]string
+}
+
+func newPerRPCCredentials(cfgs *configs.Configs) credentials.PerRPCCredentials {
+	h := map[string]string{}
+
+	if cfgs.OTLPConfigs.ExporterHeaders != "" {
+		keyValue := strings.Split(cfgs.OTLPConfigs.ExporterHeaders, ",")
+		for _, kv := range keyValue {
+			parts := strings.SplitN(kv, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				if key != "" {
+					h[key] = value
+				}
+			}
+		}
+	}
+
+	return &perRPCCredentials{
+		tlsEnabled: cfgs.OTLPConfigs.ExporterTLSEnabled,
+		headers:    h,
+	}
+}
+
+func (h *perRPCCredentials) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return h.headers, nil
+}
+
+func (h *perRPCCredentials) RequireTransportSecurity() bool {
+	return h.tlsEnabled
 }
