@@ -80,8 +80,8 @@ func newPerRPCCredentials(cfgs *configs.Configs) credentials.PerRPCCredentials {
 	h := map[string]string{}
 
 	if cfgs.OTLPConfigs.ExporterHeaders != "" {
-		keyValue := strings.Split(cfgs.OTLPConfigs.ExporterHeaders, ",")
-		for _, kv := range keyValue {
+		keyValue := strings.SplitSeq(cfgs.OTLPConfigs.ExporterHeaders, ",")
+		for kv := range keyValue {
 			parts := strings.SplitN(kv, "=", 2)
 			if len(parts) == 2 {
 				key := strings.TrimSpace(parts[0])
